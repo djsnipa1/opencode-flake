@@ -1,0 +1,214 @@
+name: Auto-update opencode versions
+
+on:
+  schedule:
+    # Run daily at 06:00 UTC
+    - cron: '0 6 * * *'
+  workflow_dispatch:  # Allow manual trigger
+
+permissions:
+  contents: write  # Needed to push commits
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v14
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      # ============================================================
+      # Check and update opencode v1 (GitHub releases)
+      # ============================================================
+      - name: Check for opencode v1 updates
+        id: opencode-v1
+        run: |
+          # Get latest release from GitHub API
+          LATEST_VERSION=$(curl -s "https://api.github.com/repos/sst/opencode/releases/latest" | jq -r '.tag_name // "v0.0.0"' | sed 's/^v//')
+          CURRENT_VERSION=$(grep 'version = ' opencode-v1.nix | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          
+          echo "Current v1 version: $CURRENT_VERSION"
+          echo "Latest v1 version: $LATEST_VERSION"
+          
+          if [ "$LATEST_VERSION" != "$CURRENT_VERSION" ]; then
+            echo "UPDATE_NEEDED=true" >> $GITHUB_OUTPUT
+            echo "NEW_VERSION=$LATEST_VERSION" >> $GITHUB_OUTPUT
+          else
+            echo "UPDATE_NEEDED=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update opencode v1 hashes
+        if: steps.opencode-v1.outputs.UPDATE_NEEDED == 'true'
+        id: opencode-v1-hashes
+        run: |
+          VERSION="${{ steps.opencode-v1.outputs.NEW_VERSION }}"
+          echo "Fetching hashes for opencode v1 $VERSION..."
+          
+          # Platform mappings
+          declare -A PLATFORMS=(
+            ["x86_64-linux"]="linux-x64:tar.gz"
+            ["aarch64-linux"]="linux-arm64:tar.gz"
+            ["x86_64-darwin"]="darwin-x64:zip"
+            ["aarch64-darwin"]="darwin-arm64:zip"
+          )
+          
+          HASHES=""
+          for system in "${!PLATFORMS[@]}"; do
+            IFS=':' read -r target ext <<< "${PLATFORMS[$system]}"
+            URL="https://github.com/sst/opencode/releases/download/v${VERSION}/opencode-${target}.${ext}"
+            
+            echo "Prefetching $URL..."
+            HASH=$(nix-prefetch-url --type sha256 "$URL" 2>&1 | tail -1)
+            SRI=$(nix hash to-sri --type sha256 "$HASH" 2>&1 | tail -1)
+            
+            HASHES="${HASHES}    \"${target}\" = \"${SRI}\";\n"
+            echo "  $target: $SRI"
+          done
+          
+          echo "HASHES<<EOF" >> $GITHUB_OUTPUT
+          echo -e "$HASHES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Update opencode-v1.nix
+        if: steps.opencode-v1.outputs.UPDATE_NEEDED == 'true'
+        run: |
+          VERSION="${{ steps.opencode-v1.outputs.NEW_VERSION }}"
+          HASHES="${{ steps.opencode-v1-hashes.outputs.HASHES }}"
+          
+          # Update version
+          sed -i "s/version = \".*\"/version = \"$VERSION\"/" opencode-v1.nix
+          
+          # Update hashes block (between "hashes = {" and "};")
+          # Use awk to replace the hashes section
+          awk -v hashes="$HASHES" '
+            /hashes = \{/ { in_hashes=1; print; print hashes; next }
+            in_hashes && /^\s*\};/ { in_hashes=0; print; next }
+            in_hashes { next }
+            { print }
+          ' opencode-v1.nix > opencode-v1.nix.tmp && mv opencode-v1.nix.tmp opencode-v1.nix
+
+      # ============================================================
+      # Check and update opencode v2 (npm registry)
+      # ============================================================
+      - name: Check for opencode v2 updates
+        id: opencode-v2
+        run: |
+          # Get latest version from npm registry
+          LATEST_VERSION=$(npm view @opencode/cli@latest version 2>/dev/null)
+          CURRENT_VERSION=$(grep 'version = ' opencode-v2.nix | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          
+          echo "Current v2 version: $CURRENT_VERSION"
+          echo "Latest v2 version: $LATEST_VERSION"
+          
+          if [ "$LATEST_VERSION" != "$CURRENT_VERSION" ]; then
+            echo "UPDATE_NEEDED=true" >> $GITHUB_OUTPUT
+            echo "NEW_VERSION=$LATEST_VERSION" >> $GITHUB_OUTPUT
+          else
+            echo "UPDATE_NEEDED=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Update opencode v2 hashes
+        if: steps.opencode-v2.outputs.UPDATE_NEEDED == 'true'
+        id: opencode-v2-hashes
+        run: |
+          VERSION="${{ steps.opencode-v2.outputs.NEW_VERSION }}"
+          echo "Fetching hashes for opencode v2 $VERSION..."
+          
+          # Platform mappings for npm packages
+          declare -A PLATFORMS=(
+            ["x86_64-linux"]="linux-x64"
+            ["aarch64-linux"]="linux-arm64"
+            ["x86_64-darwin"]="darwin-x64"
+            ["aarch64-darwin"]="darwin-arm64"
+          )
+          
+          HASHES=""
+          for system in "${!PLATFORMS[@]}"; do
+            target="${PLATFORMS[$system]}"
+            URL="https://registry.npmjs.org/@opencode/cli-${target}/-/cli-${target}-${VERSION}.tgz"
+            
+            echo "Prefetching $URL..."
+            HASH=$(nix-prefetch-url --type sha256 "$URL" 2>&1 | tail -1)
+            SRI=$(nix hash to-sri --type sha256 "$HASH" 2>&1 | tail -1)
+            
+            HASHES="${HASHES}    \"${target}\" = \"${SRI}\";\n"
+            echo "  $target: $SRI"
+          done
+          
+          echo "HASHES<<EOF" >> $GITHUB_OUTPUT
+          echo -e "$HASHES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Update opencode-v2.nix
+        if: steps.opencode-v2.outputs.UPDATE_NEEDED == 'true'
+        run: |
+          VERSION="${{ steps.opencode-v2.outputs.NEW_VERSION }}"
+          HASHES="${{ steps.opencode-v2-hashes.outputs.HASHES }}"
+          
+          # Update version
+          sed -i "s/version = \".*\"/version = \"$VERSION\"/" opencode-v2.nix
+          
+          # Update hashes block
+          awk -v hashes="$HASHES" '
+            /hashes = \{/ { in_hashes=1; print; print hashes; next }
+            in_hashes && /^\s*\};/ { in_hashes=0; print; next }
+            in_hashes { next }
+            { print }
+          ' opencode-v2.nix > opencode-v2.nix.tmp && mv opencode-v2.nix.tmp opencode-v2.nix
+
+      # ============================================================
+      # Build and test both packages
+      # ============================================================
+      - name: Build and test opencode v1
+        if: steps.opencode-v1.outputs.UPDATE_NEEDED == 'true'
+        run: |
+          nix build .#opencode --no-link
+          ./result/bin/opencode --version
+
+      - name: Build and test opencode v2
+        if: steps.opencode-v2.outputs.UPDATE_NEEDED == 'true'
+        run: |
+          nix build .#opencode2 --no-link
+          ./result/bin/opencode2 --version
+
+      # ============================================================
+      # Commit and push changes
+      # ============================================================
+      - name: Commit and push changes
+        if: steps.opencode-v1.outputs.UPDATE_NEEDED == 'true' || steps.opencode-v2.outputs.UPDATE_NEEDED == 'true'
+        run: |
+          CHANGES=""
+          if [ "${{ steps.opencode-v1.outputs.UPDATE_NEEDED }}" == "true" ]; then
+            CHANGES="$CHANGES opencode v1 to ${{ steps.opencode-v1.outputs.NEW_VERSION }}"
+          fi
+          if [ "${{ steps.opencode-v2.outputs.UPDATE_NEEDED }}" == "true" ]; then
+            CHANGES="$CHANGES opencode v2 to ${{ steps.opencode-v2.outputs.NEW_VERSION }}"
+          fi
+          
+          git add opencode-v1.nix opencode-v2.nix flake.lock
+          git commit -m "chore: update${CHANGES}"
+          git push
+
+      - name: Summary
+        run: |
+          echo "## Update Summary" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.opencode-v1.outputs.UPDATE_NEEDED }}" == "true" ]; then
+            echo "- ✅ opencode v1 updated to ${{ steps.opencode-v1.outputs.NEW_VERSION }}" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- ⏭️ opencode v1 unchanged (${{ steps.opencode-v1.outputs.NEW_VERSION || 'current' }})" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [ "${{ steps.opencode-v2.outputs.UPDATE_NEEDED }}" == "true" ]; then
+            echo "- ✅ opencode v2 updated to ${{ steps.opencode-v2.outputs.NEW_VERSION }}" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- ⏭️ opencode v2 unchanged (${{ steps.opencode-v2.outputs.NEW_VERSION || 'current' }})" >> $GITHUB_STEP_SUMMARY
+          fi
