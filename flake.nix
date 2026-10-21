@@ -66,12 +66,5 @@
         # Overlay for nixpkgs integration
         overlays.default = overlay;
       }
-    )
-    // {
-      # Top-level overlay for direct flake usage
-      overlays.default = (system: final: prev: {
-        opencode = self.packages.${system}.opencode;
-        opencode2 = self.packages.${system}.opencode2;
-      });
-    };
+    );
 }
