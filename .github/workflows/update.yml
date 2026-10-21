@@ -62,7 +62,8 @@ jobs:
             ["aarch64-darwin"]="darwin-arm64:zip"
           )
           
-          HASHES=""
+          # Write hashes to a file to avoid multiline output issues
+          HASHES_FILE=$(mktemp)
           for system in "${!PLATFORMS[@]}"; do
             IFS=':' read -r target ext <<< "${PLATFORMS[$system]}"
             URL="https://github.com/sst/opencode/releases/download/v${VERSION}/opencode-${target}.${ext}"
@@ -71,31 +72,35 @@ jobs:
             HASH=$(nix-prefetch-url --type sha256 "$URL" 2>&1 | tail -1)
             SRI=$(nix hash to-sri --type sha256 "$HASH" 2>&1 | tail -1)
             
-            HASHES="${HASHES}    \"${target}\" = \"${SRI}\";\n"
+            echo "    \"${target}\" = \"${SRI}\";" >> "$HASHES_FILE"
             echo "  $target: $SRI"
           done
           
-          echo "HASHES<<EOF" >> $GITHUB_OUTPUT
-          echo -e "$HASHES" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          # Output file path for next step
+          echo "HASHES_FILE=$HASHES_FILE" >> $GITHUB_OUTPUT
 
       - name: Update opencode-v1.nix
         if: steps.opencode-v1.outputs.UPDATE_NEEDED == 'true'
         run: |
           VERSION="${{ steps.opencode-v1.outputs.NEW_VERSION }}"
-          HASHES="${{ steps.opencode-v1-hashes.outputs.HASHES }}"
+          HASHES_FILE="${{ steps.opencode-v1-hashes.outputs.HASHES_FILE }}"
           
           # Update version
           sed -i "s/version = \".*\"/version = \"$VERSION\"/" opencode-v1.nix
           
+          # Read hashes from file and build replacement
+          HASHES=$(cat "$HASHES_FILE")
+          
           # Update hashes block (between "hashes = {" and "};")
-          # Use awk to replace the hashes section
           awk -v hashes="$HASHES" '
             /hashes = \{/ { in_hashes=1; print; print hashes; next }
             in_hashes && /^\s*\};/ { in_hashes=0; print; next }
             in_hashes { next }
             { print }
           ' opencode-v1.nix > opencode-v1.nix.tmp && mv opencode-v1.nix.tmp opencode-v1.nix
+          
+          # Cleanup
+          rm -f "$HASHES_FILE"
 
       # ============================================================
       # Check and update opencode v2 (npm registry)
@@ -132,7 +137,8 @@ jobs:
             ["aarch64-darwin"]="darwin-arm64"
           )
           
-          HASHES=""
+          # Write hashes to a file to avoid multiline output issues
+          HASHES_FILE=$(mktemp)
           for system in "${!PLATFORMS[@]}"; do
             target="${PLATFORMS[$system]}"
             URL="https://registry.npmjs.org/@opencode/cli-${target}/-/cli-${target}-${VERSION}.tgz"
@@ -141,22 +147,24 @@ jobs:
             HASH=$(nix-prefetch-url --type sha256 "$URL" 2>&1 | tail -1)
             SRI=$(nix hash to-sri --type sha256 "$HASH" 2>&1 | tail -1)
             
-            HASHES="${HASHES}    \"${target}\" = \"${SRI}\";\n"
+            echo "    \"${target}\" = \"${SRI}\";" >> "$HASHES_FILE"
             echo "  $target: $SRI"
           done
           
-          echo "HASHES<<EOF" >> $GITHUB_OUTPUT
-          echo -e "$HASHES" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          # Output file path for next step
+          echo "HASHES_FILE=$HASHES_FILE" >> $GITHUB_OUTPUT
 
       - name: Update opencode-v2.nix
         if: steps.opencode-v2.outputs.UPDATE_NEEDED == 'true'
         run: |
           VERSION="${{ steps.opencode-v2.outputs.NEW_VERSION }}"
-          HASHES="${{ steps.opencode-v2-hashes.outputs.HASHES }}"
+          HASHES_FILE="${{ steps.opencode-v2-hashes.outputs.HASHES_FILE }}"
           
           # Update version
           sed -i "s/version = \".*\"/version = \"$VERSION\"/" opencode-v2.nix
+          
+          # Read hashes from file and build replacement
+          HASHES=$(cat "$HASHES_FILE")
           
           # Update hashes block
           awk -v hashes="$HASHES" '
@@ -165,6 +173,9 @@ jobs:
             in_hashes { next }
             { print }
           ' opencode-v2.nix > opencode-v2.nix.tmp && mv opencode-v2.nix.tmp opencode-v2.nix
+          
+          # Cleanup
+          rm -f "$HASHES_FILE"
 
       # ============================================================
       # Build and test both packages
