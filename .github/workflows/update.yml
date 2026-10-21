@@ -34,13 +34,20 @@ jobs:
         id: opencode-v1
         run: |
           # Get latest release from GitHub API
-          LATEST_VERSION=$(curl -s "https://api.github.com/repos/sst/opencode/releases/latest" | jq -r '.tag_name // "v0.0.0"' | sed 's/^v//')
+          API_RESPONSE=$(curl -s -H "Accept: application/vnd.github.v3+json" "https://api.github.com/repos/sst/opencode/releases/latest")
+          LATEST_VERSION=$(echo "$API_RESPONSE" | jq -r '.tag_name // empty' | sed 's/^v//')
+          
+          # Fallback: if API fails, check tags
+          if [ -z "$LATEST_VERSION" ] || [ "$LATEST_VERSION" = "null" ]; then
+            LATEST_VERSION=$(curl -s "https://api.github.com/repos/sst/opencode/tags" | jq -r '.[0].name // empty' | sed 's/^v//')
+          fi
+          
           CURRENT_VERSION=$(grep 'version = ' opencode-v1.nix | head -1 | sed 's/.*"\(.*\)".*/\1/')
           
           echo "Current v1 version: $CURRENT_VERSION"
           echo "Latest v1 version: $LATEST_VERSION"
           
-          if [ "$LATEST_VERSION" != "$CURRENT_VERSION" ]; then
+          if [ -n "$LATEST_VERSION" ] && [ "$LATEST_VERSION" != "$CURRENT_VERSION" ]; then
             echo "UPDATE_NEEDED=true" >> $GITHUB_OUTPUT
             echo "NEW_VERSION=$LATEST_VERSION" >> $GITHUB_OUTPUT
           else
@@ -109,13 +116,13 @@ jobs:
         id: opencode-v2
         run: |
           # Get latest version from npm registry
-          LATEST_VERSION=$(npm view @opencode/cli@latest version 2>/dev/null)
+          LATEST_VERSION=$(npm view @opencode/cli@latest version 2>/dev/null || echo "")
           CURRENT_VERSION=$(grep 'version = ' opencode-v2.nix | head -1 | sed 's/.*"\(.*\)".*/\1/')
           
           echo "Current v2 version: $CURRENT_VERSION"
           echo "Latest v2 version: $LATEST_VERSION"
           
-          if [ "$LATEST_VERSION" != "$CURRENT_VERSION" ]; then
+          if [ -n "$LATEST_VERSION" ] && [ "$LATEST_VERSION" != "$CURRENT_VERSION" ]; then
             echo "UPDATE_NEEDED=true" >> $GITHUB_OUTPUT
             echo "NEW_VERSION=$LATEST_VERSION" >> $GITHUB_OUTPUT
           else
