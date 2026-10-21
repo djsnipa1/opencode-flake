@@ -190,14 +190,14 @@ jobs:
       - name: Build and test opencode v1
         if: steps.opencode-v1.outputs.UPDATE_NEEDED == 'true'
         run: |
-          nix build .#opencode --no-link
-          ./result/bin/opencode --version
+          OUT=$(nix build .#opencode --print-out-paths --no-link)
+          "$OUT/bin/opencode" --version
 
       - name: Build and test opencode v2
         if: steps.opencode-v2.outputs.UPDATE_NEEDED == 'true'
         run: |
-          nix build .#opencode2 --no-link
-          ./result/bin/opencode2 --version
+          OUT=$(nix build .#opencode2 --print-out-paths --no-link)
+          "$OUT/bin/opencode2" --version
 
       # ============================================================
       # Commit and push changes
