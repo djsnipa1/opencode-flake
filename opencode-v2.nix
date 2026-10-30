@@ -13,7 +13,7 @@
 }:
 
 let
-  version = "2.2.1";
+  version = "2.2.3";
 
   # Platform mapping: Nix system -> npm package name
   platformMap = {
@@ -31,10 +31,10 @@ let
   #   nix-prefetch-url --type sha256 https://registry.npmjs.org/@opencode/cli-${target}/-/cli-${target}-${version}.tgz
   #   nix hash to-sri --type sha256 <hash>
   hashes = {
-    "linux-arm64" = "sha256-LO4SZ3wxDdFz+Z6WlSYSz2zSAxl303YuOuqmdn/Xsgs=";
-    "linux-x64" = "sha256-Qs8d3ffRq63O6JWsnGZInsmUuMZQsfSuydOz59B9ml4=";
-    "darwin-x64" = "sha256-zm/didVv7+TOrFjnE9ol8vfXgU1VqmjRsMPHKZYkNdM=";
-    "darwin-arm64" = "sha256-selaGoKVFY6lr6BIhnqkC0IuzD6RXKlKybZMw3wsvQE=";
+    "linux-arm64" = "sha256-yD4U3jmU7kxL9oJrSLbndOUXJ+hinitgBHocnQ4yeNY=";
+    "linux-x64" = "sha256-DMjC+vhvT0lQQEtNlM5ziI0aqZhhvswci0KelXGBnEw=";
+    "darwin-x64" = "sha256-KFeQ2Dc+JUG7AT1auD5lJPrIdPiuD6eXRF7M+tW7OXg=";
+    "darwin-arm64" = "sha256-WNO0zkfU3Mbl/Q10EIBjisFQ4qMTZcmfVBb37zHm/D0=";
   };
 
   src = fetchurl {
